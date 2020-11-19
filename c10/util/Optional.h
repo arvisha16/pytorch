@@ -472,9 +472,30 @@ class optional : private OptionalBase<T> {
   constexpr optional() noexcept : OptionalBase<T>(){};
   constexpr optional(nullopt_t) noexcept : OptionalBase<T>(){};
 
+// CUDA 9.2 and below doesn't compile default copy/move constructor correctly
+#if (!defined(CUDA_VERSION) || CUDA_VERSION >= 9200)
   optional(const optional& rhs) = default;
+#else
+  optional(const optional& rhs) : OptionalBase<T>()
+    if (rhs.initialized()) {
+      ::new (static_cast<void*>(dataptr())) T(*rhs);
+      OptionalBase<T>::init_ = true;
+    }
+  }
+#endif
 
+#if (!defined(CUDA_VERSION) || CUDA_VERSION >= 9200)
   optional(optional&& rhs) = default;
+#else
+  optional(optional&& rhs) noexcept(
+      std::is_nothrow_move_constructible<T>::value)
+      : OptionalBase<T>() {
+    if (rhs.initialized()) {
+      ::new (static_cast<void*>(dataptr())) T(std::move(*rhs));
+      OptionalBase<T>::init_ = true;
+    }
+  }
+#endif
 
   // see https://github.com/akrzemi1/Optional/issues/16
   // and https://en.cppreference.com/w/cpp/utility/optional/optional,
@@ -528,9 +549,38 @@ class optional : private OptionalBase<T> {
     return *this;
   }
 
-  optional& operator=(const optional& rhs) = default;
 
+
+// CUDA 9.2 and below doesn't compile default copy/move constructor correctly
+#if (!defined(CUDA_VERSION) || CUDA_VERSION >= 9200)
+  optional& operator=(const optional& rhs) = default;
+#else
+  optional& operator=(const optional& rhs) {
+    if (initialized() == true && rhs.initialized() == false)
+      clear();
+    else if (initialized() == false && rhs.initialized() == true)
+      initialize(*rhs);
+    else if (initialized() == true && rhs.initialized() == true)
+      contained_val() = *rhs;
+    return *this;
+  }
+#endif
+
+#if (!defined(CUDA_VERSION) || CUDA_VERSION >= 9200)
   optional& operator=(optional&& rhs) = default;
+#else
+  optional& operator=(optional&& rhs) noexcept(
+      std::is_nothrow_move_assignable<T>::value&&
+          std::is_nothrow_move_constructible<T>::value) {
+    if (initialized() == true && rhs.initialized() == false)
+      clear();
+    else if (initialized() == false && rhs.initialized() == true)
+      initialize(std::move(*rhs));
+    else if (initialized() == true && rhs.initialized() == true)
+      contained_val() = std::move(*rhs);
+    return *this;
+  }
+#endif
 
   template<class U = T>
   auto operator=(U&& v) -> typename std::enable_if<
